@@ -84,46 +84,51 @@ public class Runner implements ApplicationRunner {
         restTemplate = getJsonHalRestTemplate();
 
 
-        String url;
-        Queue<String> toBeChecked = new LinkedList<>();
+        Queue<String> current = new LinkedList<>();
+        final Set<String> nextCheck = new HashSet<>();
         Set<String> validAccessions = new HashSet<>();
 
-        toBeChecked.addAll(accessions);
+        current.addAll(accessions);
 
-        while(toBeChecked.size() > 0 ) {
+        long startTime = System.nanoTime();
+        while(current.size() > 0 ) {
 
-            String accession = toBeChecked.poll();
-            if ( validAccessions.contains(accession) ) {
-                continue;
-            }
+            current.parallelStream().forEach(accession -> {
+                if (validAccessions.contains(accession)) {
+                    return;
+                }
 
-            if (validAccessions.size() % 100 == 0) {
-                log.info(String.format("Collected %d accessions by now", validAccessions.size()));
-            }
+                if (validAccessions.size() % 100 == 0) {
+                    log.info(String.format("Collected %d accessions by now", validAccessions.size()));
+                }
 
-            url = String.format("%s/%s/", relationsBaseUrl, accession);
-            Resource<Relations> doc = getDocument(url);
-            if (doc != null) {
-                validAccessions.add(accession);
-                List<Link> links = doc.getLinks().stream()
-                        .filter(el -> !(unwantedRelations.contains(el.getRel())))
-                        .collect(Collectors.toList());
-                for (Link link : links) {
-                    Set<String> relatedAccessions = getRelatedAccession(link.getHref());
-                    if (! relatedAccessions.isEmpty()) {
-                        relatedAccessions
-                                .stream()
-                                .filter(acc -> !toBeChecked.contains(acc))
-                                .forEach(toBeChecked::add);
+                String url = String.format("%s/%s/", relationsBaseUrl, accession);
+                Resource<Relations> doc = getDocument(url);
+                if (doc != null) {
+                    validAccessions.add(accession);
+                    List<Link> links = doc.getLinks().stream()
+                            .filter(el -> !(unwantedRelations.contains(el.getRel())))
+                            .collect(Collectors.toList());
+                    for (Link link : links) {
+                        Set<String> relatedAccessions = getRelatedAccession(link.getHref());
+                        nextCheck.addAll(relatedAccessions);
+
                     }
                 }
-            }
+            });
+
+            current.clear();
+            current.addAll(nextCheck);
+            nextCheck.clear();
+
+
         }
 
 //        System.out.println(checkedDocuments);
-
+        long endTime = System.nanoTime();
+        log.info(String.format("Time passed %.2f seconds", (endTime - startTime)/1000000000.0 ));
         try {
-            saveAccessionsToFile(output, accessions);
+            saveAccessionsToFile(output, validAccessions);
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -142,7 +147,7 @@ public class Runner implements ApplicationRunner {
             }
 
         } catch(HttpClientErrorException e){
-            e.printStackTrace();
+            log.warn("Document retrieving error", e);
         }
         return null;
     }
@@ -162,7 +167,7 @@ public class Runner implements ApplicationRunner {
             }
         } catch (HttpClientErrorException e) {
             if (! e.getStatusCode().equals(HttpStatus.NOT_FOUND))
-                e.printStackTrace();
+                log.warn("Relations not found", e);
         }
         return Collections.emptySet();
 
@@ -203,7 +208,7 @@ public class Runner implements ApplicationRunner {
         return filteredRelations;
     }
 
-    private void saveAccessionsToFile(String output, List<String> accessions) throws IOException {
+    private void saveAccessionsToFile(String output, Collection<String> accessions) throws IOException {
 
         File outputFile = new File(output);
         if (!outputFile.exists()) {
