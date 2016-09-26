@@ -3,35 +3,37 @@ package com.example;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.commons.cli.*;
+import org.apache.http.HeaderElement;
+import org.apache.http.HeaderElementIterator;
+import org.apache.http.conn.ConnectionKeepAliveStrategy;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClients;
+import org.apache.http.impl.conn.PoolingHttpClientConnectionManager;
+import org.apache.http.message.BasicHeaderElementIterator;
+import org.apache.http.protocol.HTTP;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
-import org.springframework.core.ParameterizedTypeReference;
-import org.springframework.hateoas.Link;
-import org.springframework.hateoas.Resource;
-import org.springframework.hateoas.Resources;
+import org.springframework.context.ApplicationContext;
 import org.springframework.hateoas.hal.Jackson2HalModule;
-import org.springframework.http.HttpMethod;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
+import org.springframework.http.client.HttpComponentsClientHttpRequestFactory;
 import org.springframework.http.converter.HttpMessageConverter;
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
-import javax.management.relation.RelationService;
 import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.util.*;
+import java.util.concurrent.*;
 import java.util.stream.Collectors;
+
 
 
 @Component
@@ -42,13 +44,9 @@ public class Runner implements ApplicationRunner {
     @Autowired
     JdbcTemplate jdbcTemplate;
 
-    @Value("#{'${relations.unwanted}'.split(',')}")
-    private List<String> unwantedRelations;
+    @Autowired
+    private ApplicationContext context;
 
-    @Value("${relations.url}")
-    private String relationsBaseUrl;
-
-    private RestTemplate restTemplate;
 
     private Options getCommandLineOptions() {
         Options options = new Options();
@@ -79,95 +77,77 @@ public class Runner implements ApplicationRunner {
 
 
         String sql = "SELECT CONCAT('SAMEA',ACCESSION) FROM SAMPLE_ASSAY WHERE SUBMISSION_ACCESSION= ?";
-        List<String> accessions = jdbcTemplate.queryForList(sql,String.class, subAccession);
+        List<String> accessions = jdbcTemplate.queryForList(sql, String.class, subAccession);
 
-        restTemplate = getJsonHalRestTemplate();
+        RestTemplate restTemplate = getJsonHalRestTemplate();
 
+        ExecutorService executor = Executors.newFixedThreadPool(64);
 
-        String url;
-        Queue<String> toBeChecked = new LinkedList<>();
+        Set<String> toBeChecked = new HashSet<>();
+        Set<String> futureCreated = new HashSet<>();
         Set<String> validAccessions = new HashSet<>();
+        Queue<Future<CheckAccessionResult>> futures = new LinkedList<>();
 
         toBeChecked.addAll(accessions);
 
-        while(toBeChecked.size() > 0 ) {
+        while(toBeChecked.size() > 0  || futures.size() > 0) {
 
-            String accession = toBeChecked.poll();
-            if ( validAccessions.contains(accession) ) {
-                continue;
-            }
-
-            if (validAccessions.size() % 100 == 0) {
-                log.info(String.format("Collected %d accessions by now", validAccessions.size()));
-            }
-
-            url = String.format("%s/%s/", relationsBaseUrl, accession);
-            Resource<Relations> doc = getDocument(url);
-            if (doc != null) {
-                validAccessions.add(accession);
-                List<Link> links = doc.getLinks().stream()
-                        .filter(el -> !(unwantedRelations.contains(el.getRel())))
-                        .collect(Collectors.toList());
-                for (Link link : links) {
-                    Set<String> relatedAccessions = getRelatedAccession(link.getHref());
-                    if (! relatedAccessions.isEmpty()) {
-                        relatedAccessions
-                                .stream()
-                                .filter(acc -> !toBeChecked.contains(acc))
-                                .forEach(toBeChecked::add);
-                    }
+            for(String acc: toBeChecked) {
+                if (acc != null && !futureCreated.contains(acc)) {
+                    CheckAccessionCallable task = context.getBean(CheckAccessionCallable.class, acc, restTemplate);
+                    Future<CheckAccessionResult> futureResult = executor.submit(task);
+                    futures.add(futureResult);
+                    futureCreated.add(acc);
                 }
             }
+
+            toBeChecked = new HashSet<>();
+
+            Queue<Future<CheckAccessionResult>> notDoneFutures = new LinkedList<>();
+            for(Future<CheckAccessionResult> fut : futures) {
+                if (fut.isDone()) {
+                    try {
+                        String acc = fut.get().accession;
+                        Set<String> relatedAcc = fut.get().relatedAccessions;
+                        if (acc != null && !validAccessions.contains(acc)) {
+                            validAccessions.add(acc);
+//                            log.info(String.format("Reached %d samples", validAccessions.size()));
+                            Set<String> notSeenAccession = relatedAcc
+                                    .stream()
+                                    .filter(a -> a != null)
+                                    .filter(a -> !validAccessions.contains(a))
+                                    .filter(a -> !futureCreated.contains(a))
+                                    .collect(Collectors.toSet());
+                            toBeChecked.addAll(notSeenAccession);
+                        }
+                    } catch ( ExecutionException e) {
+                        e.printStackTrace();
+                    }
+                } else {
+                    notDoneFutures.add(fut);
+                }
+            }
+
+            futures = notDoneFutures;
+            log.info(String.format("Futures remaining - %d | Valid Accessions - %d | Futures created - %d",
+                    futures.size(),
+                    validAccessions.size(),
+                    futureCreated.size()));
+
         }
 
-//        System.out.println(checkedDocuments);
-
+        executor.shutdown();
+        executor.awaitTermination(5,TimeUnit.MINUTES);
+        System.out.println("Process has finished");
         try {
-            saveAccessionsToFile(output, accessions);
+            saveAccessionsToFile(output, validAccessions);
         } catch (IOException e) {
             e.printStackTrace();
         }
 
     }
 
-    private Resource<Relations> getDocument(String url) {
-        try {
-            ResponseEntity<Resource<Relations>> response = restTemplate.exchange(
-                    url, HttpMethod.GET, null,
-                    new ParameterizedTypeReference<Resource<Relations>>() {
-                    });
-            if (response.getStatusCode() == HttpStatus.OK) {
-                Resource<Relations> body = response.getBody();
-                return body;
-            }
 
-        } catch(HttpClientErrorException e){
-            e.printStackTrace();
-        }
-        return null;
-    }
-
-
-    private Set<String> getRelatedAccession(String url) {
-        try {
-            ResponseEntity<Resources<Resource<Relations>>> response = restTemplate.exchange(
-                    url, HttpMethod.GET, null,
-                    new ParameterizedTypeReference<Resources<Resource<Relations>>>(){
-                    });
-            if (response.getStatusCode() == HttpStatus.OK) {
-                Resources<Resource<Relations>> body = response.getBody();
-                return body.getContent().stream()
-                        .map(el -> el.getContent().getAccession())
-                        .collect(Collectors.toSet());
-            }
-        } catch (HttpClientErrorException e) {
-            if (! e.getStatusCode().equals(HttpStatus.NOT_FOUND))
-                e.printStackTrace();
-        }
-        return Collections.emptySet();
-
-
-    }
 
     private RestTemplate getJsonHalRestTemplate() {
 
@@ -187,6 +167,36 @@ public class Runner implements ApplicationRunner {
         converters.add(0,converter);
         restTemplate.setMessageConverters(converters);
 
+        PoolingHttpClientConnectionManager conman = new PoolingHttpClientConnectionManager();
+        conman.setMaxTotal(128);
+        conman.setDefaultMaxPerRoute(64);
+        conman.setValidateAfterInactivity(0);
+
+        ConnectionKeepAliveStrategy keepAliveStrategy = new ConnectionKeepAliveStrategy() {
+
+            @Override
+            public long getKeepAliveDuration(org.apache.http.HttpResponse httpResponse, org.apache.http.protocol.HttpContext httpContext) {
+                //see if the user provides a live time
+                HeaderElementIterator it = new BasicHeaderElementIterator(httpResponse.headerIterator(HTTP.CONN_KEEP_ALIVE));
+                while (it.hasNext()) {
+                    HeaderElement he = it.nextElement();
+                    String param = he.getName();
+                    String value = he.getValue();
+                    if (value != null && param.equalsIgnoreCase("timeout")) {
+                        return Long.parseLong(value) * 1000;
+                    }
+                }
+                //default to one second live time
+                return 1 * 1000;
+            }
+        };
+
+        CloseableHttpClient httpClient = HttpClients.custom()
+                .setKeepAliveStrategy(keepAliveStrategy)
+                .setConnectionManager(conman).build();
+
+        restTemplate.setRequestFactory(new HttpComponentsClientHttpRequestFactory(httpClient));
+
         return restTemplate;
     }
 
@@ -203,7 +213,7 @@ public class Runner implements ApplicationRunner {
         return filteredRelations;
     }
 
-    private void saveAccessionsToFile(String output, List<String> accessions) throws IOException {
+    private void saveAccessionsToFile(String output, Collection<String> accessions) throws IOException {
 
         File outputFile = new File(output);
         if (!outputFile.exists()) {
