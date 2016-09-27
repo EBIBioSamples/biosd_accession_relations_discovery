@@ -95,7 +95,9 @@ public class Runner implements ApplicationRunner {
         Set<String> validAccessions = new HashSet<>();
         Queue<Future<CheckAccessionResult>> futures = new LinkedList<>();
 
-        toBeChecked.addAll(accessions);
+//        Set<String> accessionsSubset = accessions.stream().limit(100).collect(Collectors.toSet());
+//        toBeChecked.addAll(accessionsSubset);
+        toBeChecked.add("SAMEA4303542");
         log.info("Started discovery process");
 
         while(toBeChecked.size() > 0  || futures.size() > 0) {

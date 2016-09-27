@@ -51,7 +51,13 @@ public class CheckAccessionCallable implements Callable<CheckAccessionResult>{
 
         Set<String> relatedAccessions = new HashSet<>();
 
-        String url = String.format("%s/%s/", relationsBaseUrl, accession);
+        boolean isGroup = accession.startsWith("SAMEG");
+        String accType = isGroup ? "groups" : "samples";
+        String url = String.format("%s/%srelations/%s",
+                relationsBaseUrl,
+                accType,
+                accession);
+
         Resource<Relations> doc = getDocument(url);
         if (doc != null &&
             doc.getContent().getAccession().equals(accession)) {

@@ -6,6 +6,11 @@ import java.util.List;
 
 public class RelationsList {
 
-    @Value("_embedded.samplerelations")
+    @Value("samplesrelations")
     List<Relations> samplesRelations;
+
+    @Value("groupsrelations")
+    List<Relations> groupsRelations;
+
+
 }
