@@ -3,13 +3,13 @@
 	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
 	<modelVersion>4.0.0</modelVersion>
 
-	<groupId>com.example</groupId>
-	<artifactId>ebisc_ims_accessions_extractor</artifactId>
+	<groupId>uk.ac.ebi.biosamples</groupId>
+	<artifactId>relatedsamples</artifactId>
 	<version>0.0.1-SNAPSHOT</version>
 	<packaging>jar</packaging>
 
-	<name>ebisc_ims_accessions_extractor</name>
-	<description>Project for a CLI that get all the ims_ebisc accessioned samples and return a document</description>
+	<name>Related samples discovery tool</name>
+	<description>Project for a CLI that get all the samples accessioned using a specific "name" and find all related samples saving them to a file</description>
 
 	<parent>
 		<groupId>org.springframework.boot</groupId>
@@ -58,10 +58,6 @@
 			<groupId>org.springframework.hateoas</groupId>
 			<artifactId>spring-hateoas</artifactId>
 		</dependency>
-		<!--<dependency>-->
-			<!--<groupId>com.squareup.okhttp3</groupId>-->
-			<!--<artifactId>okhttp</artifactId>-->
-		<!--</dependency>-->
 		<dependency>
 			<groupId>org.apache.httpcomponents</groupId>
 			<artifactId>httpclient</artifactId>
