@@ -1,4 +1,4 @@
-package com.example;
+package uk.ac.ebi.biosamples.relatedsamples;
 
 import java.util.Set;
 

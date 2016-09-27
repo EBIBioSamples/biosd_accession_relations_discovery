@@ -1,4 +1,4 @@
-package com.example;
+package uk.ac.ebi.biosamples.relatedsamples;
 
 import org.springframework.beans.factory.annotation.Value;
 

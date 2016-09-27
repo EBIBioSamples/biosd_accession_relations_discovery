@@ -1,0 +1,12 @@
+# jdbcTemplate properties
+spring.datasource.driver-class-name=connection-driver
+spring.datasource.url=database-url
+spring.datasource.username=username
+spring.datasource.password=password
+
+# relations discovery options
+relations.url=https://www.ebi.ac.uk/biosamples/api/samplerelations # what is the service to use to get relations
+relations.unwanted=self,samplerelations,externalLinks # what are the relations to exclude during discovery
+
+# threads options
+threadpool.count = 16

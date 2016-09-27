@@ -1,4 +1,4 @@
-package com.example;
+package uk.ac.ebi.biosamples.relatedsamples;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -14,6 +14,7 @@ import org.apache.http.protocol.HTTP;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.context.ApplicationContext;
@@ -47,11 +48,13 @@ public class Runner implements ApplicationRunner {
     @Autowired
     private ApplicationContext context;
 
+    @Value("${threadpool.count:16}")
+    private int threadpoolCount;
 
     private Options getCommandLineOptions() {
         Options options = new Options();
         Option output = Option.builder("o")
-                .longOpt("output")
+                .longOpt("output-file")
                 .desc("output file where to save accessions")
                 .build();
         Option subacc = Option.builder("sa")
@@ -70,18 +73,22 @@ public class Runner implements ApplicationRunner {
 
         String output = cmd.hasOption("o") ?
                 cmd.getOptionValue("o") :
-                "base_accessions.txt";
+                "accessions.txt";
         String subAccession = cmd.hasOption("sa") ?
                 cmd.getOptionValue("sa") :
                 "ebiscims";
 
 
+        log.info("Starting process");
+
+        log.info(String.format("Querying database for accession with owner %s", subAccession));
         String sql = "SELECT CONCAT('SAMEA',ACCESSION) FROM SAMPLE_ASSAY WHERE SUBMISSION_ACCESSION= ?";
         List<String> accessions = jdbcTemplate.queryForList(sql, String.class, subAccession);
+        log.info(String.format("Query done, retrieved %d accessions from database", accessions.size()));
 
         RestTemplate restTemplate = getJsonHalRestTemplate();
 
-        ExecutorService executor = Executors.newFixedThreadPool(64);
+        ExecutorService executor = Executors.newFixedThreadPool(threadpoolCount);
 
         Set<String> toBeChecked = new HashSet<>();
         Set<String> futureCreated = new HashSet<>();
@@ -89,6 +96,7 @@ public class Runner implements ApplicationRunner {
         Queue<Future<CheckAccessionResult>> futures = new LinkedList<>();
 
         toBeChecked.addAll(accessions);
+        log.info("Started discovery process");
 
         while(toBeChecked.size() > 0  || futures.size() > 0) {
 
@@ -111,7 +119,6 @@ public class Runner implements ApplicationRunner {
                         Set<String> relatedAcc = fut.get().relatedAccessions;
                         if (acc != null && !validAccessions.contains(acc)) {
                             validAccessions.add(acc);
-//                            log.info(String.format("Reached %d samples", validAccessions.size()));
                             Set<String> notSeenAccession = relatedAcc
                                     .stream()
                                     .filter(a -> a != null)
@@ -121,7 +128,7 @@ public class Runner implements ApplicationRunner {
                             toBeChecked.addAll(notSeenAccession);
                         }
                     } catch ( ExecutionException e) {
-                        e.printStackTrace();
+                        log.error("Execution error while retrieving future content",e);
                     }
                 } else {
                     notDoneFutures.add(fut);
@@ -129,7 +136,7 @@ public class Runner implements ApplicationRunner {
             }
 
             futures = notDoneFutures;
-            log.info(String.format("Futures remaining - %d | Valid Accessions - %d | Futures created - %d",
+            log.debug(String.format("Futures remaining - %d | Valid Accessions - %d | Futures created - %d",
                     futures.size(),
                     validAccessions.size(),
                     futureCreated.size()));
@@ -138,11 +145,11 @@ public class Runner implements ApplicationRunner {
 
         executor.shutdown();
         executor.awaitTermination(5,TimeUnit.MINUTES);
-        System.out.println("Process has finished");
+        log.info(String.format("Process finished, saving file %s",output));
         try {
             saveAccessionsToFile(output, validAccessions);
         } catch (IOException e) {
-            e.printStackTrace();
+            log.error("Error while saving accessions to file", e);
         }
 
     }
@@ -198,19 +205,6 @@ public class Runner implements ApplicationRunner {
         restTemplate.setRequestFactory(new HttpComponentsClientHttpRequestFactory(httpClient));
 
         return restTemplate;
-    }
-
-    private Map filterUnwantedRelations(Map relations, List<String> unwantedRelations) {
-        Map<String, String> filteredRelations = new HashMap<>();
-        filteredRelations.put("accession", (String) relations.get("accession"));
-        Map<String, Map<String, String>> links = (Map<String, Map<String, String>>) relations.get("_links");
-        links.entrySet().forEach(el ->  {
-            if (! unwantedRelations.contains(el.getKey())) {
-                Map<String, String> linkValue = el.getValue();
-                filteredRelations.put(el.getKey(), linkValue.get("href"));
-            }
-        });
-        return filteredRelations;
     }
 
     private void saveAccessionsToFile(String output, Collection<String> accessions) throws IOException {
