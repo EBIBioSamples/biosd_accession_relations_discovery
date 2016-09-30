@@ -151,6 +151,9 @@ public class Runner implements ApplicationRunner {
 
         executor.shutdown();
         executor.awaitTermination(5,TimeUnit.MINUTES);
+        if (validAccessions.isEmpty()) {
+            throw new RuntimeException("No accession has been found during research");
+        }
         log.info(String.format("Process finished, saving file %s",output));
         try {
             saveAccessionsToFile(output, validAccessions);
