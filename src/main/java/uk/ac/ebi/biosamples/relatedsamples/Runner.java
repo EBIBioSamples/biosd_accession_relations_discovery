@@ -136,11 +136,17 @@ public class Runner implements ApplicationRunner {
             }
 
             futures = notDoneFutures;
-            log.debug(String.format("Futures remaining - %d | Valid Accessions - %d | Futures created - %d",
-                    futures.size(),
-                    validAccessions.size(),
-                    futureCreated.size()));
-
+            if (validAccessions.size() % 1000 == 0) {
+                log.info(String.format("Futures remaining - %d | Valid Accessions - %d | Futures created - %d",
+                        futures.size(),
+                        validAccessions.size(),
+                        futureCreated.size()));
+            } else {
+                log.debug(String.format("Futures remaining - %d | Valid Accessions - %d | Futures created - %d",
+                        futures.size(),
+                        validAccessions.size(),
+                        futureCreated.size()));
+            }
         }
 
         executor.shutdown();
