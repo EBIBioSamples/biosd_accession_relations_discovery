@@ -51,7 +51,7 @@ public class Runner implements ApplicationRunner {
     @Value("${thread.pool.count:16}")
     private int threadpoolCount;
 
-    @Value("${thread.wait.sec:20")
+    @Value("${thread.wait.sec:20}")
     private int waitingSeconds;
 
     private Options getCommandLineOptions() {
