@@ -9,4 +9,7 @@ relations.url=https://www.ebi.ac.uk/biosamples/api/samplerelations # what is the
 relations.unwanted=self,samplerelations,externalLinks # what are the relations to exclude during discovery
 
 # threads options
-threadpool.count = 16
+thread.pool.count = 16
+thread.wait.sec = 20
+
+

@@ -48,8 +48,11 @@ public class Runner implements ApplicationRunner {
     @Autowired
     private ApplicationContext context;
 
-    @Value("${threadpool.count:16}")
+    @Value("${thread.pool.count:16}")
     private int threadpoolCount;
+
+    @Value("${thread.wait.sec:20")
+    private int waitingSeconds;
 
     private Options getCommandLineOptions() {
         Options options = new Options();
@@ -147,6 +150,7 @@ public class Runner implements ApplicationRunner {
                         validAccessions.size(),
                         futureCreated.size()));
             }
+            Thread.sleep(waitingSeconds*1000);
         }
 
         executor.shutdown();
